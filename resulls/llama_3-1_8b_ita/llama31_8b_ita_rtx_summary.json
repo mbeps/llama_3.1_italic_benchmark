@@ -1,0 +1,94 @@
+{
+  "model": "DeepMount00/Llama-3.1-8b-ITA",
+  "evaluation_type": "zero-shot",
+  "engine": "vLLM",
+  "quantization": "none (full precision)",
+  "dataset_info": {
+    "test_file": "./data/test.jsonl",
+    "total_questions_tested": 10000,
+    "max_eval_samples": null
+  },
+  "generation_config": {
+    "system_message": "Sei un assistente utile.",
+    "max_tokens": 350,
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "top_k": -1,
+    "repetition_penalty": 1.0
+  },
+  "hardware_config": {
+    "batch_size": 4,
+    "gpu_memory_utilization": 0.9,
+    "max_num_seqs": 256,
+    "tensor_parallel_size": 1,
+    "gpu_name": "NVIDIA GeForce RTX 3090",
+    "total_vram_gb": 23.56951904296875
+  },
+  "results": {
+    "correct_answers": 7029,
+    "accuracy": 0.7029,
+    "accuracy_percent": 70.28999999999999,
+    "category_results": {
+      "orthography": {
+        "accuracy": 0.5118434603501545,
+        "correct": 497,
+        "total": 971
+      },
+      "syntax": {
+        "accuracy": 0.527235354573484,
+        "correct": 513,
+        "total": 973
+      },
+      "literature": {
+        "accuracy": 0.6707317073170732,
+        "correct": 660,
+        "total": 984
+      },
+      "civic_education": {
+        "accuracy": 0.7060637204522097,
+        "correct": 687,
+        "total": 973
+      },
+      "art_history": {
+        "accuracy": 0.6887755102040817,
+        "correct": 675,
+        "total": 980
+      },
+      "lexicon": {
+        "accuracy": 0.8130745658835546,
+        "correct": 796,
+        "total": 979
+      },
+      "geography": {
+        "accuracy": 0.7916241062308478,
+        "correct": 775,
+        "total": 979
+      },
+      "tourism": {
+        "accuracy": 0.7142857142857143,
+        "correct": 700,
+        "total": 980
+      },
+      "morphology": {
+        "accuracy": 0.5571428571428572,
+        "correct": 78,
+        "total": 140
+      },
+      "current_events": {
+        "accuracy": 0.8369565217391305,
+        "correct": 77,
+        "total": 92
+      },
+      "synonyms_and_antonyms": {
+        "accuracy": 0.8527291452111225,
+        "correct": 828,
+        "total": 971
+      },
+      "history": {
+        "accuracy": 0.7597137014314929,
+        "correct": 743,
+        "total": 978
+      }
+    }
+  }
+}
