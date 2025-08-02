@@ -8,6 +8,8 @@ from vllm import LLM, SamplingParams
 import gc
 import os
 import warnings
+import tempfile
+import shutil
 
 from .config import Llama31BenchmarkConfig
 from .utils import (
@@ -22,7 +24,7 @@ from .utils import (
 
 
 class Llama31Benchmark:
-    """Main benchmark class for Llama 3.1 models using vLLM with efficient batching"""
+    """Main benchmark class for Llama 3.1 models using vLLM with efficient batching and LoRA support"""
     
     def __init__(self, config: Llama31BenchmarkConfig):
         """Initialize benchmark with configuration"""
@@ -30,6 +32,7 @@ class Llama31Benchmark:
         self.model = None
         self.sampling_params = None
         self.dataset = None
+        self.merged_model_path = None  # Path to merged model (if LoRA is used)
         
         # Setup environment
         self._setup_environment()
@@ -66,6 +69,88 @@ class Llama31Benchmark:
             raise RuntimeError(f"❌ Insufficient GPU memory: {total_memory:.1f}GB < {self.config.min_vram_gb}GB required")
         
         print(f"✅ GPU has sufficient VRAM for the model")
+    
+    def _merge_lora_adapters(self) -> str:
+        """
+        Merge LoRA adapters with base model and return path to merged model
+        
+        Returns:
+            str: Path to the merged model (either saved to disk or temporary directory)
+        """
+        print(f"\n🔄 Merging LoRA adapters with base model...")
+        print(f"Adapter path: {self.config.lora_adapter_path}")
+        print(f"Base model: {self.config.model_name}")
+        
+        try:
+            # Import PEFT library
+            from peft import AutoPeftModelForCausalLM
+            from transformers import AutoTokenizer
+            
+            print("📦 Loading LoRA adapter and base model...")
+            
+            # Load the PEFT model (automatically loads base model + adapter)
+            # Important: Don't use quantization when merging - load in full precision
+            peft_model = AutoPeftModelForCausalLM.from_pretrained(
+                self.config.lora_adapter_path,
+                device_map="auto",
+                torch_dtype=torch.bfloat16,  # Use bf16 for memory efficiency
+                trust_remote_code=True,
+            )
+            
+            print(f"✅ PEFT model loaded: {type(peft_model)}")
+            
+            # Merge adapters into base model
+            print("🔄 Merging LoRA adapters into base model...")
+            merged_model = peft_model.merge_and_unload()
+            
+            print(f"✅ Adapters merged: {type(merged_model)}")
+            
+            # Determine where to save the merged model
+            if self.config.merged_model_save_path:
+                merged_path = self.config.merged_model_save_path
+                print(f"💾 Saving merged model to: {merged_path}")
+            else:
+                # Create temporary directory for merged model
+                temp_dir = tempfile.mkdtemp(prefix="llama31_merged_")
+                merged_path = temp_dir
+                print(f"💾 Saving merged model to temporary directory: {merged_path}")
+            
+            # Save merged model
+            os.makedirs(merged_path, exist_ok=True)
+            merged_model.save_pretrained(merged_path, safe_serialization=True)
+            
+            # Also save tokenizer to merged model directory
+            try:
+                # Try to load tokenizer from adapter path first
+                tokenizer_path = self.config.lora_adapter_path
+                if not any(f.startswith('tokenizer') for f in os.listdir(tokenizer_path)):
+                    # If no tokenizer in adapter path, use base model
+                    tokenizer_path = self.config.model_name
+                
+                tokenizer = AutoTokenizer.from_pretrained(tokenizer_path, trust_remote_code=True)
+                tokenizer.save_pretrained(merged_path)
+                print("✅ Tokenizer saved with merged model")
+            except Exception as e:
+                print(f"⚠️  Warning: Could not save tokenizer: {e}")
+                print("vLLM will attempt to load tokenizer from base model")
+            
+            # Clean up PEFT model from memory
+            del peft_model
+            del merged_model
+            cleanup_gpu_memory()
+            
+            print("✅ LoRA adapters successfully merged!")
+            print(f"📁 Merged model available at: {merged_path}")
+            
+            return merged_path
+            
+        except ImportError as e:
+            raise ImportError(
+                "PEFT library is required for LoRA adapter merging. "
+                "Please install it with: pip install peft"
+            ) from e
+        except Exception as e:
+            raise RuntimeError(f"Failed to merge LoRA adapters: {str(e)}") from e
     
     @staticmethod
     def clear_gpu_memory():
@@ -116,12 +201,24 @@ class Llama31Benchmark:
         return dataset
     
     def load_model(self):
-        """Load Llama 3.1 model using vLLM"""
-        print(f"🔄 Loading {self.config.model_name} with vLLM...")
+        """Load Llama 3.1 model using vLLM, with optional LoRA adapter merging"""
+        
+        # Determine which model to load
+        if self.config.lora_adapter_path:
+            print(f"🔄 LoRA adapter specified - will merge with base model first")
+            model_path = self._merge_lora_adapters()
+            self.merged_model_path = model_path
+            model_description = f"{self.config.model_name} + LoRA adapter"
+        else:
+            model_path = self.config.model_name
+            model_description = self.config.model_name
+        
+        print(f"🔄 Loading {model_description} with vLLM...")
+        print(f"Model path: {model_path}")
         
         # Initialize vLLM engine
         self.model = LLM(
-            model=self.config.model_name,
+            model=model_path,
             tensor_parallel_size=self.config.tensor_parallel_size,
             max_model_len=self.config.max_length,
             gpu_memory_utilization=self.config.gpu_memory_utilization,
@@ -141,6 +238,9 @@ class Llama31Benchmark:
         )
         
         print(f"✓ vLLM model loaded successfully!")
+        if self.config.lora_adapter_path:
+            print(f"✓ LoRA adapter merged and loaded")
+            print(f"✓ Base model: {self.config.model_name}")
         print(f"✓ Temperature: {self.config.temperature} (deterministic)" if self.config.temperature == 0.0 else f"✓ Temperature: {self.config.temperature}")
         self.print_gpu_memory()
     
@@ -176,7 +276,12 @@ class Llama31Benchmark:
         total = 0
         category_stats = defaultdict(lambda: {'correct': 0, 'total': 0})
         
-        print(f"\n🔍 Evaluating {self.config.model_name} on {len(dataset)} questions with batch size {self.config.batch_size}...")
+        model_description = f"{self.config.model_name}"
+        if self.config.lora_adapter_path:
+            adapter_name = os.path.basename(self.config.lora_adapter_path.rstrip('/'))
+            model_description += f" + LoRA ({adapter_name})"
+        
+        print(f"\n🔍 Evaluating {model_description} on {len(dataset)} questions with batch size {self.config.batch_size}...")
         
         # Process in batches using vLLM's efficient batching
         pbar = tqdm(range(0, len(dataset), self.config.batch_size), desc="Evaluating")
@@ -291,11 +396,32 @@ class Llama31Benchmark:
             
             overall_accuracy = sum(result['is_correct'] for result in results) / len(results) * 100
             
-            summary = {
-                'model': self.config.model_name,
+            # Build model info
+            model_info = {
+                'base_model': self.config.model_name,
                 'evaluation_type': 'zero-shot',
                 'engine': 'vLLM',
                 'quantization': 'none (full precision)',
+            }
+            
+            # Add LoRA information if applicable
+            if self.config.lora_adapter_path:
+                adapter_name = os.path.basename(self.config.lora_adapter_path.rstrip('/'))
+                model_info.update({
+                    'fine_tuning': 'LoRA',
+                    'lora_adapter_path': self.config.lora_adapter_path,
+                    'lora_adapter_name': adapter_name,
+                    'merged_model_path': self.merged_model_path,
+                    'model_description': f"{self.config.model_name} + LoRA ({adapter_name})"
+                })
+            else:
+                model_info.update({
+                    'fine_tuning': 'none',
+                    'model_description': self.config.model_name
+                })
+            
+            summary = {
+                'model_info': model_info,
                 'dataset_info': {
                     'test_file': self.config.test_file,
                     'total_questions_tested': len(results),
@@ -383,12 +509,14 @@ class Llama31Benchmark:
         
         print(f"\n{'='*60}")
         print("LLAMA 3.1 BENCHMARK (vLLM)")
+        if self.config.lora_adapter_path:
+            print("🔄 WITH LORA ADAPTER SUPPORT")
         print(f"{'='*60}")
         
         # Load dataset
         self.load_dataset()
         
-        # Load model
+        # Load model (with LoRA merging if specified)
         self.load_model()
         
         # Test inference
@@ -401,28 +529,48 @@ class Llama31Benchmark:
         
         results, accuracy, category_stats = self.run_evaluation()
         
-        # Analyze results - FIXED: removed the extra 'results' parameter
+        # Analyze results
         overall_accuracy = self.analyze_results_by_category(category_stats)
         
         # Save results
         self.save_results(results, accuracy, category_stats)
         
-        # Final cleanup
-        print(f"\n🧹 Final GPU cleanup...")
+        # Cleanup
+        print(f"\n🧹 Final cleanup...")
         del self.model
         self.clear_gpu_memory()
+        
+        # Clean up temporary merged model if created
+        if (self.merged_model_path and 
+            self.merged_model_path != self.config.merged_model_save_path and
+            self.merged_model_path.startswith(tempfile.gettempdir())):
+            try:
+                shutil.rmtree(self.merged_model_path)
+                print(f"🗑️  Cleaned up temporary merged model: {self.merged_model_path}")
+            except Exception as e:
+                print(f"⚠️  Warning: Could not clean up temporary directory: {e}")
+        
         if torch.cuda.is_available():
             final_memory = torch.cuda.memory_allocated() / 1024**3
             print(f"Final GPU memory usage: {final_memory:.2f}GB")
         
+        # Final summary
+        model_description = self.config.model_name
+        if self.config.lora_adapter_path:
+            adapter_name = os.path.basename(self.config.lora_adapter_path.rstrip('/'))
+            model_description += f" + LoRA ({adapter_name})"
+        
         print(f"\n🎉 BENCHMARK COMPLETED!")
         print("=" * 60)
+        print(f"📊 Model: {model_description}")
         print(f"📊 Final accuracy: {accuracy:.4f} ({overall_accuracy:.2f}%)")
         print(f"📊 Total questions evaluated: {len(results)}")
         print(f"📊 Batch size used: {self.config.batch_size}")
+        if self.config.lora_adapter_path:
+            print(f"📊 LoRA adapter merged and evaluated")
         print(f"📊 vLLM engine with efficient batching")
         print("=" * 60)
         
-        print(f"✅ {self.config.model_name} vLLM benchmark complete! 🚀")
+        print(f"✅ {model_description} vLLM benchmark complete! 🚀")
         
         return results, accuracy, category_stats

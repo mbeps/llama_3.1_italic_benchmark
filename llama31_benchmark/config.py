@@ -6,11 +6,16 @@ from typing import Optional
 
 @dataclass
 class Llama31BenchmarkConfig:
-    """Configuration class for Llama 3.1 benchmarking with vLLM"""
+    """Configuration class for Llama 3.1 benchmarking with vLLM and LoRA support"""
     
     # Model configuration
-    model_name: str
-    min_vram_gb: float  # Minimum VRAM required for this model size
+    model_name: Optional[str] = None  # Optional when using LoRA adapters
+    min_vram_gb: float = 16.0  # Minimum VRAM required for this model size
+    
+    # LoRA fine-tuning support
+    lora_adapter_path: Optional[str] = None  # Path to LoRA adapter directory
+    merge_adapter_in_memory: bool = True  # Merge adapter in memory vs save to disk first
+    merged_model_save_path: Optional[str] = None  # Optional path to save merged model
     
     # Dataset configuration
     test_file: str = "test.jsonl"
@@ -77,12 +82,68 @@ Risposta:
         else:
             print("No HF token found in environment - proceeding without authentication")
         
+        # Handle LoRA configuration and model name resolution
+        if self.lora_adapter_path:
+            self._validate_lora_config()
+            self._resolve_model_name_from_adapter()
+        else:
+            if not self.model_name:
+                raise ValueError("model_name is required when not using LoRA adapters")
+        
         # Auto-detect batch size if not specified
         if self.batch_size is None and not self.force_batch_size:
             self.batch_size = self._auto_detect_batch_size()
         
         # Validate configuration
         self._validate_config()
+    
+    def _validate_lora_config(self):
+        """Validate LoRA adapter configuration"""
+        if not os.path.exists(self.lora_adapter_path):
+            raise FileNotFoundError(f"LoRA adapter path not found: {self.lora_adapter_path}")
+        
+        # Check for required LoRA files
+        required_files = ["adapter_config.json", "adapter_model.safetensors"]
+        missing_files = []
+        
+        for file in required_files:
+            if not os.path.exists(os.path.join(self.lora_adapter_path, file)):
+                missing_files.append(file)
+        
+        if missing_files:
+            raise FileNotFoundError(f"Missing LoRA adapter files: {missing_files}")
+        
+        print(f"✅ LoRA adapter found at: {self.lora_adapter_path}")
+    
+    def _resolve_model_name_from_adapter(self):
+        """Read base model name from adapter config and set as model_name"""
+        import json
+        
+        adapter_config_path = os.path.join(self.lora_adapter_path, "adapter_config.json")
+        
+        try:
+            with open(adapter_config_path, 'r') as f:
+                adapter_config = json.load(f)
+            
+            base_model_name = adapter_config.get("base_model_name_or_path")
+            if not base_model_name:
+                raise ValueError("base_model_name_or_path not found in adapter_config.json")
+            
+            # If model_name was provided, verify it matches the adapter
+            if self.model_name and self.model_name != base_model_name:
+                print(f"⚠️  Warning: Provided model_name '{self.model_name}' differs from adapter's base model '{base_model_name}'")
+                print(f"📝 Using base model from adapter config: {base_model_name}")
+            
+            # Set model_name from adapter config
+            self.model_name = base_model_name
+            print(f"📋 Base model resolved from adapter: {self.model_name}")
+            
+            # Set output prefix to include lora info
+            adapter_name = os.path.basename(self.lora_adapter_path.rstrip('/'))
+            self.output_prefix = f"{self.output_prefix}_lora_{adapter_name}"
+            
+        except Exception as e:
+            raise ValueError(f"Failed to read adapter configuration: {e}")
     
     def _auto_detect_batch_size(self) -> int:
         """Auto-detect optimal batch size based on available VRAM and model size"""
@@ -110,14 +171,19 @@ Risposta:
         
         # Determine batch size based on model size and available memory
         # Larger models need more conservative batching
+        # Reduce batch size if using LoRA (merger process uses extra memory)
+        memory_multiplier = 0.8 if self.lora_adapter_path else 1.0
+        
         if self.min_vram_gb >= 140:  # 70B+ models
-            batch_size = max(1, min(4, int(available_for_batching // 2)))
+            batch_size = max(1, min(4, int(available_for_batching * memory_multiplier // 2)))
         elif self.min_vram_gb >= 32:  # Large models (8B-70B)
-            batch_size = max(2, min(8, int(available_for_batching // 1)))
+            batch_size = max(2, min(8, int(available_for_batching * memory_multiplier // 1)))
         else:  # Smaller models
-            batch_size = max(4, min(16, int(available_for_batching // 0.5)))
+            batch_size = max(4, min(16, int(available_for_batching * memory_multiplier // 0.5)))
         
         print(f"GPU memory utilization: {self.gpu_memory_utilization}")
+        if self.lora_adapter_path:
+            print(f"LoRA adapter detected - applying conservative batch sizing")
         print(f"Auto-detected batch size: {batch_size}")
         
         return batch_size
@@ -144,8 +210,18 @@ Risposta:
         """Print current configuration"""
         print("\n" + "="*60)
         print("LLAMA 3.1 BENCHMARK CONFIGURATION (vLLM)")
+        if self.lora_adapter_path:
+            print("🔄 LoRA ADAPTER SUPPORT ENABLED")
         print("="*60)
         print(f"Model: {self.model_name}")
+        
+        if self.lora_adapter_path:
+            print(f"LoRA Adapter: {self.lora_adapter_path}")
+            print(f"Merge in memory: {self.merge_adapter_in_memory}")
+            print(f"Base model from adapter config: {self.model_name}")
+            if self.merged_model_save_path:
+                print(f"Save merged model to: {self.merged_model_save_path}")
+        
         print(f"Test file: {self.test_file}")
         print(f"Max samples: {self.max_eval_samples or 'All'}")
         print(f"Batch size: {self.batch_size}")
