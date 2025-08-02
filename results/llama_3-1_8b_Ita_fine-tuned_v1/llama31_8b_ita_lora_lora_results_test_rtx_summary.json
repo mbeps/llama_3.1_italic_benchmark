@@ -1,0 +1,101 @@
+{
+  "model_info": {
+    "base_model": "DeepMount00/Llama-3.1-8b-ITA",
+    "evaluation_type": "zero-shot",
+    "engine": "vLLM",
+    "quantization": "none (full precision)",
+    "fine_tuning": "LoRA",
+    "lora_adapter_path": "./results_test",
+    "lora_adapter_name": "results_test",
+    "merged_model_path": "/tmp/llama31_merged_3hkbpap8",
+    "model_description": "DeepMount00/Llama-3.1-8b-ITA + LoRA (results_test)"
+  },
+  "dataset_info": {
+    "test_file": "./data/test.jsonl",
+    "total_questions_tested": 10000,
+    "max_eval_samples": null
+  },
+  "generation_config": {
+    "system_message": "Sei un assistente utile.",
+    "max_tokens": 350,
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "top_k": -1,
+    "repetition_penalty": 1.0
+  },
+  "hardware_config": {
+    "batch_size": 4,
+    "gpu_memory_utilization": 0.75,
+    "max_num_seqs": 64,
+    "tensor_parallel_size": 1,
+    "gpu_name": "NVIDIA GeForce RTX 3090",
+    "total_vram_gb": 23.68890380859375
+  },
+  "results": {
+    "correct_answers": 7275,
+    "accuracy": 0.7275,
+    "accuracy_percent": 72.75,
+    "category_results": {
+      "orthography": {
+        "accuracy": 0.5406797116374872,
+        "correct": 525,
+        "total": 971
+      },
+      "syntax": {
+        "accuracy": 0.5231243576567317,
+        "correct": 509,
+        "total": 973
+      },
+      "literature": {
+        "accuracy": 0.7123983739837398,
+        "correct": 701,
+        "total": 984
+      },
+      "civic_education": {
+        "accuracy": 0.7728674203494348,
+        "correct": 752,
+        "total": 973
+      },
+      "art_history": {
+        "accuracy": 0.7030612244897959,
+        "correct": 689,
+        "total": 980
+      },
+      "lexicon": {
+        "accuracy": 0.8375893769152196,
+        "correct": 820,
+        "total": 979
+      },
+      "geography": {
+        "accuracy": 0.8089887640449438,
+        "correct": 792,
+        "total": 979
+      },
+      "tourism": {
+        "accuracy": 0.7204081632653061,
+        "correct": 706,
+        "total": 980
+      },
+      "morphology": {
+        "accuracy": 0.6142857142857143,
+        "correct": 86,
+        "total": 140
+      },
+      "current_events": {
+        "accuracy": 0.8260869565217391,
+        "correct": 76,
+        "total": 92
+      },
+      "synonyms_and_antonyms": {
+        "accuracy": 0.8990731204943357,
+        "correct": 873,
+        "total": 971
+      },
+      "history": {
+        "accuracy": 0.7627811860940695,
+        "correct": 746,
+        "total": 978
+      }
+    }
+  }
+}
