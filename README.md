@@ -77,3 +77,5 @@ Place environment values (for example HF tokens or custom settings) in a `.env` 
 
 Benchmark output and summaries are written to the `results/` folder. The `run_benchmark()` flow saves a detailed CSV (`*_results.csv`) and a JSON summary (`*_summary.json`).
 
+## References
+- [ITALIC: An Italian Culture-Aware Natural Language Benchmark](https://aclanthology.org/2025.naacl-long.68.pdf)
